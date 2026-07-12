@@ -1,0 +1,64 @@
+{
+  "architecture": {
+    "type": "U-Net (Ronneberger et al.), trained from scratch",
+    "encoder": "4x DoubleConv (Conv3x3-BN-ReLU x2) + maxpool blocks, channels 32->64->128->256->512, no pretrained backbone",
+    "bottleneck": "DoubleConv 512->1024",
+    "decoder": "4x ConvTranspose2d upsample + skip-concat + DoubleConv, mirrored back to 32 channels",
+    "output_head": "1x1 conv -> 1 channel logits (sigmoid applied at inference, not inside the model)",
+    "base_channels": 32,
+    "n_parameters": 7771891
+  },
+  "input_size": [
+    224,
+    224,
+    3
+  ],
+  "output": "binary segmentation mask, 1 channel, same 224x224 spatial size as input",
+  "normalization": {
+    "scale": "pixel values divided by 255.0 before normalization",
+    "mean": [
+      0.485,
+      0.456,
+      0.406
+    ],
+    "std": [
+      0.229,
+      0.224,
+      0.225
+    ],
+    "note": "standard ImageNet stats, applied per-channel RGB"
+  },
+  "binarization_threshold": 0.5,
+  "val_dice": 0.8127,
+  "val_iou": 0.7241,
+  "val_metrics_note": "recomputed directly from unet_best.pth on the 135-image validation set; per-epoch history was not persisted to disk during training.",
+  "test_overall_dice": 0.7572,
+  "test_overall_iou": 0.665,
+  "per_stage_dice_iou": {
+    "developing": {
+      "dice_mean": 0.7736,
+      "iou_mean": 0.6868,
+      "n_images": 41
+    },
+    "flowering": {
+      "dice_mean": 0.7289,
+      "iou_mean": 0.6313,
+      "n_images": 60
+    },
+    "fruiting": {
+      "dice_mean": 0.625,
+      "iou_mean": 0.5186,
+      "n_images": 21
+    },
+    "seeding": {
+      "dice_mean": 0.8575,
+      "iou_mean": 0.7756,
+      "n_images": 38
+    }
+  },
+  "per_stage_note": "computed on the held-out test set (160 images), not validation. fruiting is weakest (smallest class, expected occlusion by fruit).",
+  "training_date": "2026-07-10",
+  "framework": "PyTorch",
+  "torch_version": "2.6.0+cu124",
+  "source_checkpoint": "checkpoints/unet_best.pth (epoch 58 of 60, best validation Dice)"
+}

@@ -1,0 +1,12 @@
+# Raw and derived dataset images — large, fully regeneratable via the notebook's
+# Task 2 cell (COCO polygons -> masks) run against the raw dataset. The
+# authoritative train/valid/test split is recorded in export/lpf_full_dataset.csv.
+tomato final dataset/
+processed/
+
+# Local scratch copy, not the canonical tracked notebook
+unet_pipeline_v2.ipynb
+
+__pycache__/
+*.pyc
+.ipynb_checkpoints/

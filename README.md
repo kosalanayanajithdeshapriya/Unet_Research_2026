@@ -11,7 +11,7 @@ This repository is trained and evaluated **independently** of the ResNet50 and f
 | | |
 |---|---|
 | **Task** | Binary semantic segmentation (leaf vs. background) |
-| **Architecture** | U-Net, encoder-decoder with skip connections |
+| **Architecture** | U-Net, encoder-decoder with skip connections, trained from scratch (no pretrained backbone) |
 | **Framework** | PyTorch |
 | **Input** | 224 × 224 × 3 RGB image |
 | **Output** | 224 × 224 × 1 binary mask (sigmoid, threshold 0.5) |
@@ -21,41 +21,56 @@ This repository is trained and evaluated **independently** of the ResNet50 and f
 
 ## Dataset
 
-- ~982 self-collected tomato plant images across four growth stages (seeding, developing, flowering, fruiting)
+- 982 self-collected tomato plant images across four growth stages (seeding, developing, flowering, fruiting)
 - Annotated on Roboflow with polygon segmentation masks, exported in COCO format
-- Split into `train/`, `valid/`, `test/` folders
-- COCO polygons converted to binary PNG masks prior to training
+- Split into `train/` (687), `valid/` (135), `test/` (160) folders
+- COCO polygons converted to binary PNG masks prior to training (see `unet_pipeline.ipynb`, Task 2)
 - The authoritative train/valid/test split is recorded in [`export/lpf_full_dataset.csv`](export/lpf_full_dataset.csv) and should be treated as the single source of truth by any downstream project (e.g. the fusion pipeline) to avoid data leakage from re-splitting
+- Raw and processed image files are not committed to this repo (regeneratable, see [Reproducing training](#reproducing-training)) — only code and exported artifacts are versioned here
 
 ## Architecture
 
+Custom U-Net (Ronneberger et al.), `base_channels=32`:
+
 ```
 INPUT        224 × 224 × 3 RGB image
-ENC 1        Conv → Conv → MaxPool   [64 filters]
-ENC 2        Conv → Conv → MaxPool   [128 filters]
-ENC 3        Conv → Conv → MaxPool   [256 filters]
-ENC 4        Conv → Conv → MaxPool   [512 filters]
-BOTTLENECK   Conv → Conv             [1024 filters]
-DEC 4        UpSample + Skip 4 → Conv → Conv   [512 filters]
-DEC 3        UpSample + Skip 3 → Conv → Conv   [256 filters]
-DEC 2        UpSample + Skip 2 → Conv → Conv   [128 filters]
-DEC 1        UpSample + Skip 1 → Conv → Conv   [64 filters]
+ENC 1        Conv → Conv → MaxPool   [32 filters]
+ENC 2        Conv → Conv → MaxPool   [64 filters]
+ENC 3        Conv → Conv → MaxPool   [128 filters]
+ENC 4        Conv → Conv → MaxPool   [256 filters]
+BOTTLENECK   Conv → Conv             [512 filters]
+DEC 4        UpSample + Skip 4 → Conv → Conv   [256 filters]
+DEC 3        UpSample + Skip 3 → Conv → Conv   [128 filters]
+DEC 2        UpSample + Skip 2 → Conv → Conv   [64 filters]
+DEC 1        UpSample + Skip 1 → Conv → Conv   [32 filters]
 OUTPUT       Conv(1) + Sigmoid → binary mask
 ```
 
-**Loss:** combined Binary Cross-Entropy + Dice Loss, to balance pixel-level accuracy with mask overlap under leaf/background class imbalance.
+7.77M parameters total.
+
+**Loss:** combined Binary Cross-Entropy + Dice Loss (0.5 / 0.5), to balance pixel-level accuracy with mask overlap under leaf/background class imbalance.
+
+**Augmentation:** random horizontal flip, vertical flip, and 90°-multiple rotation, applied identically to image and mask.
 
 ## Results
 
-Trained for 60 epochs, best checkpoint selected by validation Dice score.
+Trained for 60 epochs (Adam, lr=1e-4, `ReduceLROnPlateau` on validation Dice), best checkpoint selected by validation Dice score (epoch 58/60).
 
-| Metric | Train | Validation |
+| Metric | Validation | Test (held out) |
 |---|---|---|
-| Loss (BCE + Dice) | 0.1580 | 0.1471 |
-| Dice score | 0.8027 | **0.8134** (best) |
-| IoU | 0.7253 | 0.7243 |
+| Dice score | 0.8127 | 0.7572 |
+| IoU | 0.7241 | 0.6650 |
 
-Train and validation metrics are closely matched, indicating the model generalizes well rather than overfitting on this dataset size. Per-growth-stage Dice/IoU breakdown is available in `export/metadata.json`.
+Per-growth-stage test Dice/IoU (see `export/metadata.json` for full detail):
+
+| Stage | Dice | IoU | n |
+|---|---|---|---|
+| seeding | 0.858 | 0.776 | 38 |
+| developing | 0.774 | 0.687 | 41 |
+| flowering | 0.729 | 0.631 | 60 |
+| fruiting | 0.625 | 0.519 | 21 |
+
+`fruiting` is consistently the weakest stage — smallest class (21 test images) and leaves are frequently occluded by fruit.
 
 > Segmentation quality is evaluated relative to its purpose — producing a reliable LPF scalar for the fusion classifier — not as a standalone segmentation benchmark.
 
@@ -63,15 +78,19 @@ Train and validation metrics are closely matched, indicating the model generaliz
 
 ```
 .
-├── notebooks/                      training and evaluation notebooks
-├── data/                           train/valid/test images + converted masks
+├── unet_pipeline.ipynb             training, evaluation, and LPF extraction (single notebook, PyTorch)
+├── checkpoints/                    unet_best.pth / unet_final.pth (full training state dicts)
+├── outputs/                        test-set scores, training curves, qualitative examples
 ├── export/                         standalone, versioned model artifacts (see below)
 │   ├── unet_tomato_final.pth       state_dict only, no pickled model object
 │   ├── metadata.json               architecture, I/O shapes, normalization, threshold, metrics
 │   ├── unet_lpf_extractor.py       standalone loader — no dependency on training code
 │   └── lpf_full_dataset.csv        filename, growth_stage, split, lpf — for all 982 images
+├── requirements.txt
 └── README.md
 ```
+
+`tomato final dataset/` (raw Roboflow export) and `processed/` (merged images + converted masks) are used locally during training but are not committed — see [Reproducing training](#reproducing-training).
 
 ## Using the exported model
 
@@ -84,7 +103,7 @@ from unet_lpf_extractor import load_unet, compute_lpf, compute_lpf_batch
 model = load_unet("export/unet_tomato_final.pth")
 
 # Compute LPF for a single image — works on ANY image, annotated or not
-lpf = compute_lpf(model, "path/to/image.jpg")
+lpf, mask = compute_lpf(model, "path/to/image.jpg")
 print(lpf)  # float in [0, 1]
 
 # Compute LPF for a whole directory and save results to CSV
@@ -97,16 +116,17 @@ compute_lpf_batch(model, "path/to/images/", output_csv_path="lpf_output.csv")
 
 ```bash
 pip install -r requirements.txt
-jupyter notebook notebooks/train_unet.ipynb
 ```
 
-Key dependencies: `torch`, `torchvision`, `albumentations`, `pycocotools`, `imagehash`.
+Place the Roboflow COCO export under `tomato final dataset/{train,valid,test}/{fruiting,flowering,developing,seeding}/`, each split folder containing a shared `_annotations.coco.json`. Then open and run `unet_pipeline.ipynb` top to bottom — Task 2 converts the COCO polygons into merged `processed/{split}/images` + `masks` folders before training starts.
+
+Key dependencies: `torch`, `torchvision`, `opencv-python`, `pycocotools`.
 
 ## Known limitations / open work
 
-- Aggregate Dice (0.81) has room to improve; a pretrained encoder backbone (e.g. ResNet34 via `segmentation_models_pytorch`) is planned as the next iteration
-- Segmentation difficulty likely varies by growth stage (e.g. occlusion at the fruiting stage) — see per-stage breakdown in `export/metadata.json`
-- A data-leakage audit (perceptual hashing across train/valid/test) is in progress for the broader project; this repo's split is already enforced via `lpf_full_dataset.csv`
+- Aggregate Dice (0.81 validation, 0.76 test) has room to improve; a pretrained encoder backbone (e.g. ResNet34 via `segmentation_models_pytorch`) is a candidate next iteration
+- Segmentation is weakest at the fruiting stage (occlusion by fruit, smallest class) — see per-stage breakdown in `export/metadata.json`
+- This repo's train/valid/test split is enforced via `lpf_full_dataset.csv`; a data-leakage audit across the broader fusion project is separate, ongoing work
 
 ## Part of
 
