@@ -8,3 +8,5 @@ matplotlib
 pycocotools
 tqdm
 ipywidgets
+scikit-learn
+seaborn
